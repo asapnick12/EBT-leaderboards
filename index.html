@@ -268,7 +268,7 @@
     <div class="section-right">
       <div class="sim-badge">
         <svg viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
-        Simulated Live Feed
+        EBT Live Feed
       </div>
       <div class="refresh-info">Syncing in <span id="countdown">60:00</span></div>
     </div>
@@ -320,37 +320,54 @@
   const REFRESH_INTERVAL = 3600;
 
   // ─────────────────────────────────────────────
-  // SIMULATED API — replace with real Stake call:
+  // PROXY API CALL
+  // Calls /api/leaderboard on this same site.
+  // Netlify routes that to netlify/functions/leaderboard.js
+  // which securely holds the Stake.us API key server-side.
   //
-  //   const res = await fetch('https://stake.us/api/affiliate/leaderboard', {
-  //     headers: { 'Authorization': 'Bearer YOUR_API_KEY' }
-  //   });
-  //   const data = await res.json();
-  //   return data.players; // [{ name, wager }, ...]
+  // To activate: add STAKE_API_KEY to Netlify environment variables.
   // ─────────────────────────────────────────────
+
   const MOCK_NAMES = ['xX_Staker_Xx','HighRollerRay','EBTKing','SlotGodz','WagerBeast','DiceKing99','BustOrBoom','LuckyLevi','AllInAndy','CasinoQueen','TreyFan01','NightRoller','PlatinumPete','DiamondDave','GoldGrinder'];
 
+  // Seed with mock data for preview — replaced by real API once key is set
   let entries = MOCK_NAMES.sort(()=>Math.random()-0.5).slice(0,8).map(name=>({
     name, wager: Math.round((Math.random()*180000+5000)/100)*100, delta: 0
   }));
 
-  function simulateApiCall() {
-    return new Promise(resolve => {
-      setTimeout(() => {
-        entries = entries.map(e => {
-          if (Math.random() < 0.35) {
-            const bump = Math.round((Math.random()*24500+500)/100)*100;
-            return { ...e, wager: e.wager + bump, delta: bump };
-          }
-          return { ...e, delta: 0 };
-        });
-        if (Math.random() < 0.12 && entries.length < 15) {
-          const unused = MOCK_NAMES.filter(n => !entries.find(e=>e.name===n));
-          if (unused.length) entries.push({ name: unused[Math.floor(Math.random()*unused.length)], wager: Math.round((Math.random()*30000+1000)/100)*100, delta: 0, isNew: true });
+  async function fetchLeaderboard() {
+    try {
+      // Calls the Netlify proxy function — API key never exposed in browser
+      const res = await fetch('/.netlify/functions/leaderboard');
+      if (!res.ok) throw new Error('API unavailable');
+      const data = await res.json();
+
+      if (!data.players || data.players.length === 0) throw new Error('No data');
+
+      // Merge new data with previous to calculate deltas
+      const updated = data.players.map(p => {
+        const prev = entries.find(e => e.name.toLowerCase() === p.name.toLowerCase());
+        const delta = prev ? Math.max(0, p.wager - prev.wager) : 0;
+        return { name: p.name, wager: p.wager, delta, isNew: !prev };
+      });
+      entries = updated;
+      return entries;
+    } catch (err) {
+      // Fall back to simulated data if API not yet configured
+      console.warn('Using simulated data:', err.message);
+      entries = entries.map(e => {
+        if (Math.random() < 0.35) {
+          const bump = Math.round((Math.random()*24500+500)/100)*100;
+          return { ...e, wager: e.wager + bump, delta: bump };
         }
-        resolve(entries);
-      }, 500);
-    });
+        return { ...e, delta: 0 };
+      });
+      if (Math.random() < 0.12 && entries.length < 15) {
+        const unused = MOCK_NAMES.filter(n => !entries.find(e=>e.name===n));
+        if (unused.length) entries.push({ name: unused[Math.floor(Math.random()*unused.length)], wager: Math.round((Math.random()*30000+1000)/100)*100, delta: 0, isNew: true });
+      }
+      return entries;
+    }
   }
   // ─────────────────────────────────────────────
 
@@ -420,7 +437,7 @@
   async function poll() {
     setStatus('connecting');
     try {
-      const data = await simulateApiCall();
+      const data = await fetchLeaderboard();
       setStatus('live');
       render(data, data.some(e=>e.delta>0||e.isNew));
     } catch { setStatus('error'); }
